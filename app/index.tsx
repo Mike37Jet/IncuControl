@@ -44,7 +44,7 @@ export default function Index() {
       { backgroundColor: Colors[colorScheme].background }
     ]}>
       <Image
-        source={require('@/assets/images/icon.png')}
+        source={require('@/assets/images/icon.svg')}
         style={styles.logo}
       />
       <ThemedText style={styles.title}>IncuControl</ThemedText>

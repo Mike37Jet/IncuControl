@@ -209,8 +209,8 @@ export default function AnalyticsScreen() {
       stroke: palette.gridLines,
       strokeWidth: 0.5,
     },
-    formatYLabel: (value) => parseFloat(value).toFixed(1),
-    formatXLabel: (value) => value,
+    formatYLabel: (value: string): string => parseFloat(value).toFixed(1),
+    formatXLabel: (value: string): string => value,
     yAxisInterval: 1,
   };
 
@@ -235,7 +235,7 @@ export default function AnalyticsScreen() {
       stroke: palette.gridLines,
       strokeWidth: 0.5,
     },
-    formatXLabel: (value) => value,
+    formatXLabel: (value: string): string => value,
     yAxisInterval: 5,
   };
 
