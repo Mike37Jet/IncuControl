@@ -8,6 +8,7 @@
     "scheme": "incucontrol",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "description": "Aplicación para monitorear y controlar incubadoras de huevos de gallina",
     "ios": {
       "supportsTablet": true
     },
@@ -16,7 +17,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.miguel3600.IncuControl"
     },
     "web": {
       "bundler": "metro",
@@ -37,6 +39,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "e666b4a9-2083-4491-b093-ede86ba10c90"
+      }
     }
   }
 }
