@@ -19,6 +19,8 @@ export default function TabLayout() {
         tabBarStyle: {
           height: 60,
           paddingBottom: 10,
+          // Garantizar que siempre sea visible
+          display: 'flex'
         },
         headerShown: false,
       }}

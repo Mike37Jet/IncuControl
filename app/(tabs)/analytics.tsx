@@ -1,10 +1,8 @@
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
-import { Platform, ScrollView, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
-import { LineChart } from 'react-native-chart-kit';
-import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Platform, ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/ThemedText';
@@ -12,7 +10,7 @@ import { ThemedView } from '@/components/ThemedView';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 
-// Constantes de proporción basadas en secuencia Fibonacci
+// Constantes de proporción
 const SPACING = {
   TINY: 2,
   SMALL: 5,
@@ -23,246 +21,75 @@ const SPACING = {
   XXLARGE: 55,
 };
 
-// Tipo para los datos de temperatura/humedad
-interface SensorData {
-  timestamp: Date;
-  temperature: number;
-  humidity: number;
-}
-
 export default function AnalyticsScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
-  const [tempData, setTempData] = useState<SensorData[]>([]);
-  const [humidityData, setHumidityData] = useState<SensorData[]>([]);
-  const [timeLabels, setTimeLabels] = useState<string[]>([]);
-  const [selectedView, setSelectedView] = useState<'temperature' | 'humidity'>('temperature');
-  
-  // Animación para transición entre vistas
-  const viewTransition = useSharedValue(0);
-  
-  // Efectos de animación
-  const tempViewStyle = useAnimatedStyle(() => {
-    return {
-      opacity: 1 - viewTransition.value,
-      transform: [{ translateX: -100 * viewTransition.value }],
-      position: 'absolute',
-      width: '100%',
-      display: viewTransition.value > 0.5 ? 'none' : 'flex',
-    };
-  });
-  
-  const humidityViewStyle = useAnimatedStyle(() => {
-    return {
-      opacity: viewTransition.value,
-      transform: [{ translateX: 100 * (1 - viewTransition.value) }],
-      position: 'absolute',
-      width: '100%',
-      display: viewTransition.value < 0.5 ? 'none' : 'flex',
-    };
-  });
-  
-  // Efecto de cambio de vista
-  useEffect(() => {
-    viewTransition.value = withTiming(
-      selectedView === 'temperature' ? 0 : 1,
-      { duration: 300, easing: Easing.inOut(Easing.ease) }
-    );
-  }, [selectedView]);
+  const [selectedView, setSelectedView] = useState('temperature');
+  const [isLoading, setIsLoading] = useState(true);
   
   // Paleta de colores adaptativa
   const palette = useMemo(() => ({
     background: Colors[colorScheme].background,
     card: colorScheme === 'dark' ? '#1C1C1E' : '#FFFFFF',
-    cardShadow: colorScheme === 'dark' ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.1)',
     text: Colors[colorScheme].text,
     textSecondary: colorScheme === 'dark' ? '#8E8E93' : '#6E6E73',
-    temperature: colorScheme === 'dark' ? '#FF9500' : '#FF6B00', // Naranja cálido
-    humidity: colorScheme === 'dark' ? '#64D2FF' : '#0080FF', // Azul fresco
+    temperature: colorScheme === 'dark' ? '#FF9500' : '#FF6B00',
+    humidity: colorScheme === 'dark' ? '#64D2FF' : '#0080FF',
     segmentActive: colorScheme === 'dark' ? '#FFFFFF' : '#FFFFFF',
     segmentBg: colorScheme === 'dark' ? '#2C2C2E' : '#F2F2F7',
-    segmentSelectedBg: colorScheme === 'dark' ? '#3A3A3C' : '#E5E5EA',
-    gridLines: colorScheme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-    limitLine: colorScheme === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)',
   }), [colorScheme]);
-  
-  // Usando useWindowDimensions para obtener dimensiones actualizadas de la pantalla
-  const { width } = useWindowDimensions();
-  // Calculando ancho con márgenes adecuados y asegurando valor mínimo
-  const chartWidth = Math.max(width - SPACING.XLARGE, 300);
-  
-  // Optimizamos las etiquetas para mostrar solo aproximadamente 8 horas
-  const getOptimizedLabels = () => {
-    if (timeLabels.length === 0) return [];
-    
-    // Queremos mostrar aprox. 8 etiquetas equidistantes - más minimalista
-    const step = Math.ceil(timeLabels.length / 8);
-    
-    return timeLabels.filter((_, index) => index % step === 0);
-  };
-  
-  // Datos para las etiquetas optimizadas
-  const [optimizedLabels, setOptimizedLabels] = useState<string[]>([]);
 
-  // Simulación de datos históricos y generación de nuevos datos
+  // Estadísticas estáticas para evitar cálculos
+  const tempStats = {
+    current: 37.5,
+    avg: 37.6, 
+    min: 37.3,
+    max: 37.8
+  };
+
+  const humidityStats = {
+    current: 58,
+    avg: 58,
+    min: 57,
+    max: 59
+  };
+
   useEffect(() => {
-    // Verificar si existe una configuración
     const checkConfig = async () => {
       try {
         const savedConfig = await AsyncStorage.getItem('incubationConfig');
         if (!savedConfig) {
-          // No hay configuración, redirigir a la página inicial
           router.replace('/setup');
+          return;
         }
+        
+        // Simulamos tiempo de carga
+        setTimeout(() => {
+          setIsLoading(false);
+        }, 500);
       } catch (error) {
         console.error('Error al verificar configuración:', error);
+        setIsLoading(false);
       }
     };
     
     checkConfig();
-
-    // Generar datos iniciales para las últimas 24 horas (uno por hora)
-    const generateInitialData = () => {
-      const initialTemp = [];
-      const initialHumidity = [];
-      const labels = [];
-      
-      const now = new Date();
-      
-      for (let i = 0; i < 24; i++) {
-        const timestamp = new Date(now);
-        timestamp.setHours(now.getHours() - (23 - i));
-        
-        // Datos simulados centrados alrededor de 37.5°C y 58% con pequeñas variaciones
-        const temperature = +(37.5 + (Math.random() - 0.5) * 1).toFixed(1);
-        const humidity = Math.floor(58 + (Math.random() - 0.5) * 6);
-        
-        initialTemp.push({ timestamp, temperature, humidity });
-        initialHumidity.push({ timestamp, temperature, humidity });
-        
-        // Formato de hora para las etiquetas - más minimalista
-        labels.push(timestamp.getHours().toString().padStart(2, '0'));
-      }
-      
-      setTempData(initialTemp);
-      setHumidityData(initialHumidity);
-      setTimeLabels(labels);
-    };
-    
-    generateInitialData();
-    
-    // Simular la adición de nuevos datos cada minuto
-    const interval = setInterval(() => {
-      const now = new Date();
-      const newTemperature = +(37.5 + (Math.random() - 0.5) * 1).toFixed(1);
-      const newHumidity = Math.floor(58 + (Math.random() - 0.5) * 6);
-      
-      const newData = { 
-        timestamp: now, 
-        temperature: newTemperature, 
-        humidity: newHumidity 
-      };
-      
-      setTempData(prev => {
-        const updated = [...prev.slice(1), newData];
-        return updated;
-      });
-      
-      setHumidityData(prev => {
-        const updated = [...prev.slice(1), newData];
-        return updated;
-      });
-      
-      setTimeLabels(prev => {
-        const newHour = now.getHours().toString().padStart(2, '0');
-        const updated = [...prev.slice(1), newHour];
-        return updated;
-      });
-    }, 60000); // Actualizar cada minuto
-    
-    return () => clearInterval(interval);
   }, []);
 
-  // Actualizar las etiquetas optimizadas cuando cambian las etiquetas originales
-  useEffect(() => {
-    setOptimizedLabels(getOptimizedLabels());
-  }, [timeLabels]);
-
-  // Configuración para el gráfico de temperatura
-  const tempChartConfig = {
-    backgroundColor: 'transparent',
-    backgroundGradientFrom: palette.card,
-    backgroundGradientTo: palette.card,
-    decimalPlaces: 1,
-    color: (opacity = 1) => `rgba(255, 107, 0, ${opacity})`,
-    labelColor: (opacity = 1) => palette.text,
-    style: {
-      borderRadius: SPACING.MEDIUM,
-    },
-    propsForDots: {
-      r: "3",
-      strokeWidth: "2",
-      stroke: palette.temperature
-    },
-    propsForBackgroundLines: {
-      strokeDasharray: '', // Líneas continuas
-      stroke: palette.gridLines,
-      strokeWidth: 0.5,
-    },
-    formatYLabel: (value: string): string => parseFloat(value).toFixed(1),
-    formatXLabel: (value: string): string => value,
-    yAxisInterval: 1,
-  };
-
-  // Configuración para el gráfico de humedad
-  const humidityChartConfig = {
-    backgroundColor: 'transparent',
-    backgroundGradientFrom: palette.card,
-    backgroundGradientTo: palette.card,
-    decimalPlaces: 0,
-    color: (opacity = 1) => `rgba(0, 128, 255, ${opacity})`,
-    labelColor: (opacity = 1) => palette.text,
-    style: {
-      borderRadius: SPACING.MEDIUM,
-    },
-    propsForDots: {
-      r: "3",
-      strokeWidth: "2",
-      stroke: palette.humidity
-    },
-    propsForBackgroundLines: {
-      strokeDasharray: '', // Líneas continuas
-      stroke: palette.gridLines,
-      strokeWidth: 0.5,
-    },
-    formatXLabel: (value: string): string => value,
-    yAxisInterval: 5,
-  };
-
-  // Crear arrays con posiciones nulas para los puntos que no deben mostrar etiquetas
-  const createSparseLabels = () => {
-    if (timeLabels.length === 0) return [];
-    
-    const step = Math.ceil(timeLabels.length / 8);
-    
-    return timeLabels.map((label, index) => {
-      return index % step === 0 ? label : "";
-    });
-  };
-
-  const sparseLabels = createSparseLabels();
+  if (isLoading) {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: palette.background }]}>
+        <ThemedView style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={palette.temperature} />
+          <ThemedText style={styles.loadingText}>Cargando datos...</ThemedText>
+        </ThemedView>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <SafeAreaView 
-      style={[
-        styles.safeArea,
-        { backgroundColor: palette.background }
-      ]}
-    >
-      <ScrollView 
-        contentContainerStyle={styles.container}
-        showsVerticalScrollIndicator={false}
-      >
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: palette.background }]}>
+      <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
         <ThemedView style={styles.headerRow}>
           <ThemedText type="title" style={styles.title}>
             Análisis
@@ -270,10 +97,7 @@ export default function AnalyticsScreen() {
         </ThemedView>
 
         {/* Selector de visualización */}
-        <ThemedView style={[
-          styles.segmentContainer, 
-          {backgroundColor: palette.segmentBg}
-        ]}>
+        <ThemedView style={[styles.segmentContainer, {backgroundColor: palette.segmentBg}]}>
           <TouchableOpacity 
             style={[
               styles.segmentButton, 
@@ -284,20 +108,8 @@ export default function AnalyticsScreen() {
             ]}
             onPress={() => setSelectedView('temperature')}
           >
-            <Feather 
-              name="thermometer" 
-              size={SPACING.MEDIUM} 
-              color={selectedView === 'temperature' ? palette.segmentActive : palette.text} 
-            />
-            <ThemedText 
-              style={[
-                styles.segmentText, 
-                selectedView === 'temperature' && [
-                  styles.segmentTextActive,
-                  {color: palette.segmentActive}
-                ]
-              ]}
-            >
+            <Feather name="thermometer" size={SPACING.MEDIUM} color={selectedView === 'temperature' ? palette.segmentActive : palette.text} />
+            <ThemedText style={[styles.segmentText, selectedView === 'temperature' && styles.segmentTextActive]}>
               Temperatura
             </ThemedText>
           </TouchableOpacity>
@@ -312,232 +124,116 @@ export default function AnalyticsScreen() {
             ]}
             onPress={() => setSelectedView('humidity')}
           >
-            <Feather 
-              name="droplet" 
-              size={SPACING.MEDIUM} 
-              color={selectedView === 'humidity' ? palette.segmentActive : palette.text}
-            />
-            <ThemedText 
-              style={[
-                styles.segmentText, 
-                selectedView === 'humidity' && [
-                  styles.segmentTextActive,
-                  {color: palette.segmentActive}
-                ]
-              ]}
-            >
+            <Feather name="droplet" size={SPACING.MEDIUM} color={selectedView === 'humidity' ? palette.segmentActive : palette.text} />
+            <ThemedText style={[styles.segmentText, selectedView === 'humidity' && styles.segmentTextActive]}>
               Humedad
             </ThemedText>
           </TouchableOpacity>
         </ThemedView>
 
-        {/* Contenedor para vistas animadas */}
+        {/* Contenedor para vistas estáticas (sin animaciones) */}
         <ThemedView style={styles.chartContainer}>
-          {/* Vista de Temperatura */}
-          <Animated.View style={[styles.chartView, tempViewStyle]}>
-            {tempData.length > 0 && (
-              <>
-                <ThemedView style={styles.chartSummary}>
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Actual
-                    </ThemedText>
-                    <ThemedText style={[styles.summaryNumber, {color: palette.temperature}]}>
-                      {tempData[tempData.length - 1].temperature.toFixed(1)}°C
-                    </ThemedText>
-                  </ThemedView>
-                  
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Prom
-                    </ThemedText>
-                    <ThemedText style={styles.summaryNumber}>
-                      {(tempData.reduce((sum, item) => sum + item.temperature, 0) / tempData.length).toFixed(1)}°C
-                    </ThemedText>
-                  </ThemedView>
-                  
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Mín
-                    </ThemedText>
-                    <ThemedText style={styles.summaryNumber}>
-                      {Math.min(...tempData.map(item => item.temperature)).toFixed(1)}°C
-                    </ThemedText>
-                  </ThemedView>
-                  
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Máx
-                    </ThemedText>
-                    <ThemedText style={styles.summaryNumber}>
-                      {Math.max(...tempData.map(item => item.temperature)).toFixed(1)}°C
-                    </ThemedText>
-                  </ThemedView>
+          {selectedView === 'temperature' ? (
+            <View>
+              <ThemedView style={styles.chartSummary}>
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Actual</ThemedText>
+                  <ThemedText style={[styles.summaryNumber, {color: palette.temperature}]}>
+                    {tempStats.current.toFixed(1)}°C
+                  </ThemedText>
                 </ThemedView>
+                
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Prom</ThemedText>
+                  <ThemedText style={styles.summaryNumber}>{tempStats.avg}°C</ThemedText>
+                </ThemedView>
+                
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Mín</ThemedText>
+                  <ThemedText style={styles.summaryNumber}>{tempStats.min.toFixed(1)}°C</ThemedText>
+                </ThemedView>
+                
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Máx</ThemedText>
+                  <ThemedText style={styles.summaryNumber}>{tempStats.max.toFixed(1)}°C</ThemedText>
+                </ThemedView>
+              </ThemedView>
 
-                <ThemedView style={[styles.chartWrapper, {backgroundColor: palette.card}]}>
-                  <ThemedView style={styles.timeLabel}>
-                    <Feather name="clock" size={SPACING.BASE} color={palette.textSecondary} />
-                    <ThemedText style={styles.timeLabelText}>Últimas 24h</ThemedText>
-                  </ThemedView>
-                  
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.chartScrollContainer}
-                  >
-                    <LineChart
-                      data={{
-                        labels: sparseLabels,
-                        datasets: [
-                          {
-                            data: tempData.map(data => data.temperature),
-                            color: (opacity = 1) => `rgba(255, 107, 0, ${opacity})`,
-                            strokeWidth: 2
-                          },
-                          // Líneas de límites más sutiles
-                          {
-                            data: Array(tempData.length).fill(37),
-                            color: () => palette.limitLine,
-                            strokeWidth: 1,
-                            withDots: false
-                          },
-                          {
-                            data: Array(tempData.length).fill(38),
-                            color: () => palette.limitLine,
-                            strokeWidth: 1,
-                            withDots: false
-                          }
-                        ]
-                      }}
-                      width={chartWidth}
-                      height={220}
-                      chartConfig={tempChartConfig}
-                      bezier
-                      style={styles.chart}
-                      withInnerLines={true}
-                      withVerticalLines={false}
-                      withOuterLines={false}
-                      withShadow={false}
-                      fromZero={false}
-                      yAxisSuffix="°"
-                      verticalLabelRotation={0}
-                    />
-                  </ScrollView>
-                  
-                  <ThemedView style={styles.referenceLines}>
-                    <ThemedView style={styles.referenceLine}>
-                      <ThemedView style={[styles.referenceIndicator, {backgroundColor: palette.limitLine}]} />
-                      <ThemedText style={styles.referenceText}>Rango óptimo: 37-38°C</ThemedText>
-                    </ThemedView>
+              <ThemedView style={[styles.chartWrapper, {backgroundColor: palette.card}]}>
+                <ThemedView style={styles.timeLabel}>
+                  <Feather name="clock" size={SPACING.BASE} color={palette.textSecondary} />
+                  <ThemedText style={styles.timeLabelText}>Últimas 24h</ThemedText>
+                </ThemedView>
+                
+                {/* Gráfico estático simplificado */}
+                <ThemedView style={styles.staticChart}>
+                  <ThemedView style={styles.chartPlaceholder}>
+                    <Feather name="bar-chart-2" size={SPACING.XLARGE} color={palette.temperature} />
+                    <ThemedText style={styles.chartPlaceholderText}>
+                      Gráfico de temperatura
+                    </ThemedText>
                   </ThemedView>
                 </ThemedView>
-              </>
-            )}
-          </Animated.View>
+                
+                <ThemedView style={styles.referenceLines}>
+                  <ThemedView style={styles.referenceLine}>
+                    <ThemedView style={[styles.referenceIndicator, {backgroundColor: palette.temperature}]} />
+                    <ThemedText style={styles.referenceText}>Rango óptimo: 37-38°C</ThemedText>
+                  </ThemedView>
+                </ThemedView>
+              </ThemedView>
+            </View>
+          ) : (
+            <View>
+              <ThemedView style={styles.chartSummary}>
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Actual</ThemedText>
+                  <ThemedText style={[styles.summaryNumber, {color: palette.humidity}]}>
+                    {humidityStats.current}%
+                  </ThemedText>
+                </ThemedView>
+                
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Prom</ThemedText>
+                  <ThemedText style={styles.summaryNumber}>{humidityStats.avg}%</ThemedText>
+                </ThemedView>
+                
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Mín</ThemedText>
+                  <ThemedText style={styles.summaryNumber}>{humidityStats.min}%</ThemedText>
+                </ThemedView>
+                
+                <ThemedView style={styles.summaryValue}>
+                  <ThemedText style={styles.summaryLabel}>Máx</ThemedText>
+                  <ThemedText style={styles.summaryNumber}>{humidityStats.max}%</ThemedText>
+                </ThemedView>
+              </ThemedView>
 
-          {/* Vista de Humedad */}
-          <Animated.View style={[styles.chartView, humidityViewStyle]}>
-            {humidityData.length > 0 && (
-              <>
-                <ThemedView style={styles.chartSummary}>
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Actual
-                    </ThemedText>
-                    <ThemedText style={[styles.summaryNumber, {color: palette.humidity}]}>
-                      {humidityData[humidityData.length - 1].humidity}%
-                    </ThemedText>
-                  </ThemedView>
-                  
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Prom
-                    </ThemedText>
-                    <ThemedText style={styles.summaryNumber}>
-                      {Math.round(humidityData.reduce((sum, item) => sum + item.humidity, 0) / humidityData.length)}%
-                    </ThemedText>
-                  </ThemedView>
-                  
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Mín
-                    </ThemedText>
-                    <ThemedText style={styles.summaryNumber}>
-                      {Math.min(...humidityData.map(item => item.humidity))}%
-                    </ThemedText>
-                  </ThemedView>
-                  
-                  <ThemedView style={styles.summaryValue}>
-                    <ThemedText style={styles.summaryLabel}>
-                      Máx
-                    </ThemedText>
-                    <ThemedText style={styles.summaryNumber}>
-                      {Math.max(...humidityData.map(item => item.humidity))}%
+              <ThemedView style={[styles.chartWrapper, {backgroundColor: palette.card}]}>
+                <ThemedView style={styles.timeLabel}>
+                  <Feather name="clock" size={SPACING.BASE} color={palette.textSecondary} />
+                  <ThemedText style={styles.timeLabelText}>Últimas 24h</ThemedText>
+                </ThemedView>
+                
+                {/* Gráfico estático simplificado */}
+                <ThemedView style={styles.staticChart}>
+                  <ThemedView style={styles.chartPlaceholder}>
+                    <Feather name="bar-chart-2" size={SPACING.XLARGE} color={palette.humidity} />
+                    <ThemedText style={styles.chartPlaceholderText}>
+                      Gráfico de humedad
                     </ThemedText>
                   </ThemedView>
                 </ThemedView>
-
-                <ThemedView style={[styles.chartWrapper, {backgroundColor: palette.card}]}>
-                  <ThemedView style={styles.timeLabel}>
-                    <Feather name="clock" size={SPACING.BASE} color={palette.textSecondary} />
-                    <ThemedText style={styles.timeLabelText}>Últimas 24h</ThemedText>
-                  </ThemedView>
-                  
-                  <ScrollView 
-                    horizontal 
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.chartScrollContainer}
-                  >
-                    <LineChart
-                      data={{
-                        labels: sparseLabels,
-                        datasets: [
-                          {
-                            data: humidityData.map(data => data.humidity),
-                            color: (opacity = 1) => `rgba(0, 128, 255, ${opacity})`,
-                            strokeWidth: 2
-                          },
-                          // Líneas de límites más sutiles
-                          {
-                            data: Array(humidityData.length).fill(55),
-                            color: () => palette.limitLine,
-                            strokeWidth: 1,
-                            withDots: false
-                          },
-                          {
-                            data: Array(humidityData.length).fill(60),
-                            color: () => palette.limitLine,
-                            strokeWidth: 1,
-                            withDots: false
-                          }
-                        ]
-                      }}
-                      width={chartWidth}
-                      height={220}
-                      chartConfig={humidityChartConfig}
-                      bezier
-                      style={styles.chart}
-                      withInnerLines={true}
-                      withVerticalLines={false}
-                      withOuterLines={false}
-                      withShadow={false}
-                      fromZero={false}
-                      yAxisSuffix="%"
-                      verticalLabelRotation={0}
-                    />
-                  </ScrollView>
-                  
-                  <ThemedView style={styles.referenceLines}>
-                    <ThemedView style={styles.referenceLine}>
-                      <ThemedView style={[styles.referenceIndicator, {backgroundColor: palette.limitLine}]} />
-                      <ThemedText style={styles.referenceText}>Rango óptimo: 55-60%</ThemedText>
-                    </ThemedView>
+                
+                <ThemedView style={styles.referenceLines}>
+                  <ThemedView style={styles.referenceLine}>
+                    <ThemedView style={[styles.referenceIndicator, {backgroundColor: palette.humidity}]} />
+                    <ThemedText style={styles.referenceText}>Rango óptimo: 55-60%</ThemedText>
                   </ThemedView>
                 </ThemedView>
-              </>
-            )}
-          </Animated.View>
+              </ThemedView>
+            </View>
+          )}
         </ThemedView>
 
         <ThemedView style={[styles.tipCard, {backgroundColor: palette.card}]}>
@@ -546,7 +242,6 @@ export default function AnalyticsScreen() {
             Los valores estables dentro del rango óptimo favorecen el desarrollo embrionario.
           </ThemedText>
         </ThemedView>
-
       </ScrollView>
     </SafeAreaView>
   );
@@ -594,16 +289,10 @@ const styles = StyleSheet.create({
   },
   segmentTextActive: {
     fontWeight: '600',
+    color: 'white',
   },
   chartContainer: {
-    position: 'relative',
     marginBottom: SPACING.LARGE,
-    height: 360, // Altura fija para evitar saltos en la UI
-  },
-  chartView: {
-    top: 0,
-    left: 0,
-    right: 0,
   },
   chartSummary: {
     flexDirection: 'row',
@@ -638,6 +327,19 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  staticChart: {
+    height: 180,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chartPlaceholder: {
+    alignItems: 'center',
+    opacity: 0.7,
+  },
+  chartPlaceholderText: {
+    marginTop: SPACING.SMALL,
+    fontSize: SPACING.MEDIUM,
+  },
   timeLabel: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -647,13 +349,6 @@ const styles = StyleSheet.create({
     fontSize: SPACING.BASE,
     opacity: 0.6,
     marginLeft: SPACING.TINY,
-  },
-  chartScrollContainer: {
-    paddingRight: SPACING.MEDIUM,
-  },
-  chart: {
-    borderRadius: SPACING.SMALL,
-    marginVertical: SPACING.SMALL,
   },
   referenceLines: {
     marginTop: SPACING.SMALL,
@@ -698,5 +393,16 @@ const styles = StyleSheet.create({
     fontSize: SPACING.BASE,
     flex: 1,
     opacity: 0.8,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.LARGE,
+  },
+  loadingText: {
+    marginTop: SPACING.MEDIUM,
+    fontSize: SPACING.MEDIUM,
+    opacity: 0.7,
   },
 });

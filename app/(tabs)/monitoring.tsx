@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, BackHandler, Platform, StyleSheet, TouchableOpacity } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import ParallaxScrollView from '@/components/ParallaxScrollView';
@@ -123,10 +123,142 @@ export default function MonitoringScreen() {
     };
   });
   
-  const handleCancelIncubation = () => {
+  // Justo después de los estados existentes, añadir:
+  const [showTempEditModal, setShowTempEditModal] = useState(false);
+  const [editMinTemp, setEditMinTemp] = useState('37.5');
+  const [editMaxTemp, setEditMaxTemp] = useState('38.0');
+  const [incubationConfig, setIncubationConfig] = useState<any>(null);
+  
+  // Animación para el modal
+  const modalOpacity = useSharedValue(0);
+  const modalScale = useSharedValue(0.9);
+  
+  const modalAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: modalOpacity.value,
+      transform: [{ scale: modalScale.value }]
+    };
+  });
+  
+  // Cargar configuración existente
+  useEffect(() => {
+    const loadConfig = async () => {
+      try {
+        const savedConfig = await AsyncStorage.getItem('incubationConfig');
+        if (savedConfig) {
+          const config = JSON.parse(savedConfig);
+          setIncubationConfig(config);
+          setEditMinTemp(config.minTemp.toFixed(1));
+          setEditMaxTemp(config.maxTemp.toFixed(1));
+        }
+      } catch (error) {
+        console.error('Error al cargar configuración:', error);
+      }
+    };
+    
+    loadConfig();
+  }, []);
+  
+  // Mostrar modal de edición
+  const handleShowEditTemp = () => {
+    // Cargar valores actuales
+    if (incubationConfig) {
+      setEditMinTemp(incubationConfig.minTemp.toFixed(1));
+      setEditMaxTemp(incubationConfig.maxTemp.toFixed(1));
+    }
+    
+    setShowTempEditModal(true);
+    modalOpacity.value = withTiming(1, { duration: 300 });
+    modalScale.value = withTiming(1, { duration: 300 });
+  };
+  
+  // Ocultar modal
+  const handleCloseModal = () => {
+    modalOpacity.value = withTiming(0, { duration: 200 });
+    modalScale.value = withTiming(0.9, { duration: 200 }, () => {
+      runOnJS(setShowTempEditModal)(false);
+    });
+  };
+  
+  // Ajustar temperaturas en el modal
+  const adjustEditTemperature = (type: 'min' | 'max', increment: boolean) => {
+    const step = 0.1;
+    if (type === 'min') {
+      const current = parseFloat(editMinTemp);
+      const max = parseFloat(editMaxTemp);
+      if (increment) {
+        setEditMinTemp(Math.min(current + step, max - step).toFixed(1));
+      } else {
+        setEditMinTemp(Math.max(current - step, 35).toFixed(1));
+      }
+    } else {
+      const min = parseFloat(editMinTemp);
+      const current = parseFloat(editMaxTemp);
+      if (increment) {
+        setEditMaxTemp(Math.min(current + step, 40).toFixed(1));
+      } else {
+        setEditMaxTemp(Math.max(current - step, min + step).toFixed(1));
+      }
+    }
+  };
+  
+  // Guardar cambios
+  const handleSaveTemperature = async () => {
+    const min = parseFloat(editMinTemp);
+    const max = parseFloat(editMaxTemp);
+    
+    if (isNaN(min) || isNaN(max) || min >= max) {
+      Alert.alert('Error', 'Temperaturas inválidas (mínima < máxima)');
+      return;
+    }
+    
+    try {
+      // Actualizar la configuración existente
+      const updatedConfig = {
+        ...incubationConfig,
+        minTemp: min,
+        maxTemp: max,
+        lastUpdated: new Date().toISOString()
+      };
+      
+      await AsyncStorage.setItem('incubationConfig', JSON.stringify(updatedConfig));
+      setIncubationConfig(updatedConfig);
+      
+      // Actualizar la UI con efecto de confirmación
+      tempOpacity.value = withSpring(0.6, { damping: 15 });
+      setTimeout(() => {
+        tempOpacity.value = withSpring(1, { damping: 15 });
+      }, 300);
+      
+      // Cerrar el modal
+      handleCloseModal();
+      
+      // Notificar al usuario
+      Alert.alert(
+        "Configuración actualizada", 
+        `El rango de temperatura ha sido actualizado a ${min}°C - ${max}°C.`
+      );
+    } catch (error) {
+      console.error('Error al guardar configuración:', error);
+      Alert.alert('Error', 'No se pudo guardar la configuración');
+    }
+  };
+  
+  // Determinar si el rango de temperatura es ideal
+  const isIdealRange = () => {
+    const min = parseFloat(editMinTemp);
+    const max = parseFloat(editMaxTemp);
+    return min >= 37 && min <= 38 && max >= 37.5 && max <= 38.5 && max - min >= 0.5;
+  };
+  
+  const handleCancelOrFinishIncubation = () => {
+    const isCompleted = progress >= 100;
+    
     Alert.alert(
-      "Cancelar Incubación",
-      "¿Estás seguro que deseas cancelar el proceso de incubación?",
+      isCompleted ? "Finalizar Incubación" : "Cancelar Incubación",
+      isCompleted 
+        ? "¿Estás seguro que deseas finalizar el proceso de incubación? Los huevos ya deberían haber eclosionado."
+        : "¿Estás seguro que deseas cancelar el proceso de incubación?",
       [
         { text: "No", style: "cancel" },
         { 
@@ -134,9 +266,19 @@ export default function MonitoringScreen() {
           onPress: async () => {
             try {
               await AsyncStorage.removeItem('incubationConfig');
+              
+              if (isCompleted) {
+                // Podríamos guardar un registro de la incubación completada exitosamente
+                await AsyncStorage.setItem('lastIncubation', JSON.stringify({
+                  endDate: new Date().toISOString(),
+                  successful: true,
+                  duration: 21, // días
+                }));
+              }
+              
               router.replace('/setup');
             } catch (error) {
-              console.error('Error al cancelar incubación:', error);
+              console.error(`Error al ${isCompleted ? 'finalizar' : 'cancelar'} incubación:`, error);
             }
           } 
         }
@@ -173,20 +315,27 @@ export default function MonitoringScreen() {
     );
   };
 
+  // Optimiza la verificación de configuración
   useEffect(() => {
+    let isMounted = true;
+    
     const checkConfig = async () => {
       try {
         const savedConfig = await AsyncStorage.getItem('incubationConfig');
-        if (!savedConfig) {
+        if (!savedConfig && isMounted) {
           router.replace('/setup');
         }
       } catch (error) {
         console.error('Error al verificar configuración:', error);
-        router.replace('/setup');
+        if (isMounted) router.replace('/setup');
       }
     };
     
     checkConfig();
+    
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Obtener colores para valores según estados (normal/alerta)
@@ -216,12 +365,10 @@ export default function MonitoringScreen() {
             source={require('@/assets/images/partial-react-logo.png')}
             style={[
               styles.headerImage,
-              
             ]}
           />
         }
       >
-        
         {/* Encabezado con animación sutil */}
         <ThemedView style={[styles.titleContainer]}>
           <ThemedText type="title" style={styles.titleText}>
@@ -242,6 +389,12 @@ export default function MonitoringScreen() {
             <ThemedText type="subtitle" style={styles.sectionTitle}>
               Condiciones Actuales
             </ThemedText>
+            <TouchableOpacity 
+              style={styles.editButton}
+              onPress={handleShowEditTemp}
+            >
+              <Feather name="edit-2" size={SPACING.MEDIUM} color={palette.textSecondary} />
+            </TouchableOpacity>
           </ThemedView>
           
           <ThemedView style={styles.statsContainer}>
@@ -351,14 +504,138 @@ export default function MonitoringScreen() {
             </TouchableOpacity>
             
             <TouchableOpacity 
-              style={[styles.button, styles.dangerButton]} 
-              onPress={handleCancelIncubation}
+              style={[styles.button, styles.dangerButton, progress >= 100 && styles.successButton]} 
+              onPress={handleCancelOrFinishIncubation}
             >
-              <Feather name="x-circle" size={SPACING.MEDIUM} color="white" />
-              <ThemedText style={styles.dangerButtonText}>Cancelar</ThemedText>
+              <Feather 
+                name={progress >= 100 ? "check-circle" : "x-circle"} 
+                size={SPACING.MEDIUM} 
+                color="white" 
+              />
+              <ThemedText style={styles.dangerButtonText}>
+                {progress >= 100 ? "Finalizar" : "Cancelar"}
+              </ThemedText>
             </TouchableOpacity>
           </ThemedView>
         </ThemedView>
+        
+        {/* Modal para editar temperatura */}
+        {showTempEditModal && (
+          <>
+            <TouchableOpacity 
+              style={styles.modalOverlay} 
+              activeOpacity={0.8}
+              onPress={handleCloseModal}
+            />
+            <Animated.View style={[styles.modalContainer, modalAnimatedStyle]}>
+              <ThemedView style={[styles.modalContent, { backgroundColor: palette.surface }]}>
+                <ThemedView style={styles.modalHeader}>
+                  <ThemedText style={styles.modalTitle}>Editar Temperatura</ThemedText>
+                  <TouchableOpacity onPress={handleCloseModal}>
+                    <Feather name="x" size={SPACING.MEDIUM} color={palette.textSecondary} />
+                  </TouchableOpacity>
+                </ThemedView>
+                
+                <ThemedView style={[styles.modalBody, { paddingTop: SPACING.MEDIUM }]}>
+                  {/* Control de Temperatura Mínima */}
+                  <ThemedView style={styles.temperatureRow}>
+                    <ThemedView style={styles.tempLabelContainer}>
+                      <ThemedText style={styles.tempLabelText}>Mínima</ThemedText>
+                      <ThemedText style={styles.tempValue}>{editMinTemp}°C</ThemedText>
+                    </ThemedView>
+                    <ThemedView style={styles.valueControl}>
+                      <TouchableOpacity
+                        style={[styles.controlButton, { backgroundColor: palette.neutral }]}
+                        onPress={() => adjustEditTemperature('min', false)}>
+                        <Feather name="minus" size={SPACING.MEDIUM - 2} color="white" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.controlButton, { backgroundColor: palette.primary }]}
+                        onPress={() => adjustEditTemperature('min', true)}>
+                        <Feather name="plus" size={SPACING.MEDIUM - 2} color="white" />
+                      </TouchableOpacity>
+                    </ThemedView>
+                  </ThemedView>
+                  
+                  {/* Barra de rango */}
+                  <ThemedView style={[styles.temperatureBar, { backgroundColor: 'rgba(0,0,0,0.1)' }]}>
+                    <ThemedView style={[styles.temperatureRange, { 
+                      left: `${((parseFloat(editMinTemp) - 35) / (40 - 35)) * 100}%`,
+                      right: `${(1 - (parseFloat(editMaxTemp) - 35) / (40 - 35)) * 100}%`,
+                      backgroundColor: isIdealRange() ? palette.success : palette.primary
+                    }]} />
+                    
+                    {/* Marcador del rango óptimo */}
+                    <ThemedView style={[styles.optimalRangeMarker, { 
+                      left: `${((37.0 - 35) / (40 - 35)) * 100}%`,
+                      right: `${(1 - (38.0 - 35) / (40 - 35)) * 100}%`,
+                    }]} />
+                  </ThemedView>
+                  
+                  <ThemedView style={styles.temperatureScale}>
+                    <ThemedText style={[styles.scaleText, {color: palette.textSecondary}]}>35°C</ThemedText>
+                    <ThemedText style={[styles.scaleText, {color: palette.textSecondary}]}>40°C</ThemedText>
+                  </ThemedView>
+                  
+                  {/* Control de Temperatura Máxima */}
+                  <ThemedView style={styles.temperatureRow}>
+                    <ThemedView style={styles.tempLabelContainer}>
+                      <ThemedText style={styles.tempLabelText}>Máxima</ThemedText>
+                      <ThemedText style={styles.tempValue}>{editMaxTemp}°C</ThemedText>
+                    </ThemedView>
+                    <ThemedView style={styles.valueControl}>
+                      <TouchableOpacity
+                        style={[styles.controlButton, { backgroundColor: palette.neutral }]}
+                        onPress={() => adjustEditTemperature('max', false)}>
+                        <Feather name="minus" size={SPACING.MEDIUM - 2} color="white" />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.controlButton, { backgroundColor: palette.primary }]}
+                        onPress={() => adjustEditTemperature('max', true)}>
+                        <Feather name="plus" size={SPACING.MEDIUM - 2} color="white" />
+                      </TouchableOpacity>
+                    </ThemedView>
+                  </ThemedView>
+                  
+                  {/* Indicador de rango ideal */}
+                  <ThemedView style={styles.rangeIndicator}>
+                    <ThemedView style={styles.rangeIconContainer}>
+                      <Feather 
+                        name={isIdealRange() ? "check-circle" : "alert-circle"} 
+                        size={SPACING.MEDIUM} 
+                        color={isIdealRange() ? palette.success : palette.warning} 
+                      />
+                    </ThemedView>
+                    <ThemedText style={[
+                      styles.rangeIndicatorText, 
+                      { color: isIdealRange() ? palette.success : palette.warning }
+                    ]}>
+                      {isIdealRange() 
+                        ? "Rango óptimo configurado" 
+                        : "Recomendación: 37.0°C - 38.0°C"
+                      }
+                    </ThemedText>
+                  </ThemedView>
+                </ThemedView>
+                
+                <ThemedView style={styles.modalFooter}>
+                  <TouchableOpacity 
+                    style={[styles.modalButton, styles.cancelButton]}
+                    onPress={handleCloseModal}
+                  >
+                    <ThemedText style={styles.cancelButtonText}>Cancelar</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.modalButton, styles.saveButton, { backgroundColor: palette.primary }]}
+                    onPress={handleSaveTemperature}
+                  >
+                    <ThemedText style={styles.saveButtonText}>Guardar</ThemedText>
+                  </TouchableOpacity>
+                </ThemedView>
+              </ThemedView>
+            </Animated.View>
+          </>
+        )}
       </ParallaxScrollView>
     </SafeAreaView>
   );
@@ -509,6 +786,9 @@ const styles = StyleSheet.create({
   dangerButton: {
     backgroundColor: '#FF3B30',
   },
+  successButton: {
+    backgroundColor: '#34C759',
+  },
   secondaryButton: {
     backgroundColor: 'rgba(0,0,0,0.05)',
   },
@@ -520,5 +800,163 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontWeight: '600',
     marginLeft: SPACING.SMALL,
+  },
+  // Estilos para el botón de edición
+  editButton: {
+    marginLeft: 'auto',
+    padding: SPACING.SMALL,
+  },
+  
+  // Estilos para el modal
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  modalContainer: {
+    position: 'absolute',
+    width: '90%',
+    alignSelf: 'center',
+    top: '25%',
+    zIndex: 1001,
+  },
+  modalContent: {
+    borderRadius: SPACING.MEDIUM,
+    overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: SPACING.TINY },
+        shadowOpacity: 0.25,
+        shadowRadius: SPACING.MEDIUM,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SPACING.MEDIUM,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+  },
+  modalTitle: {
+    fontSize: SPACING.MEDIUM,
+    fontWeight: '600',
+  },
+  modalBody: {
+    padding: SPACING.MEDIUM,
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    padding: SPACING.MEDIUM,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(0,0,0,0.1)',
+    gap: SPACING.MEDIUM,
+  },
+  modalButton: {
+    paddingVertical: SPACING.BASE,
+    paddingHorizontal: SPACING.LARGE,
+    borderRadius: SPACING.BASE,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelButton: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  saveButton: {
+    minWidth: 100,
+  },
+  cancelButtonText: {
+    fontWeight: '500',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontWeight: '600',
+  },
+  
+  // Estilos adicionales para el editor de temperatura
+  temperatureRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.BASE,
+  },
+  tempLabelContainer: {
+    alignItems: 'flex-start',
+  },
+  tempLabelText: {
+    fontSize: SPACING.BASE,
+    opacity: 0.7,
+    marginBottom: SPACING.TINY,
+  },
+  tempValue: {
+    fontSize: SPACING.MEDIUM,
+    fontWeight: '600',
+  },
+  valueControl: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.BASE,
+  },
+  controlButton: {
+    width: SPACING.XLARGE - 8,
+    height: SPACING.XLARGE - 8,
+    borderRadius: SPACING.SMALL,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  temperatureBar: {
+    height: SPACING.BASE,
+    borderRadius: SPACING.BASE / 2,
+    marginVertical: SPACING.MEDIUM,
+    position: 'relative',
+  },
+  temperatureRange: {
+    position: 'absolute',
+    top: 0,
+    height: '100%',
+    borderRadius: SPACING.BASE / 2,
+  },
+  optimalRangeMarker: {
+    position: 'absolute',
+    top: -SPACING.TINY,
+    height: SPACING.BASE + SPACING.TINY * 2,
+    borderRadius: SPACING.SMALL,
+    borderWidth: 1,
+    borderColor: '#34C759',
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
+  },
+  temperatureScale: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.MEDIUM,
+  },
+  scaleText: {
+    fontSize: SPACING.BASE - 1,
+  },
+  rangeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: SPACING.SMALL,
+  },
+  rangeIconContainer: {
+    marginRight: SPACING.SMALL,
+  },
+  rangeIndicatorText: {
+    fontSize: SPACING.BASE - 1,
+    fontWeight: '500',
   },
 });

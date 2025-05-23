@@ -1,64 +1,50 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
-import { SplashScreen, Stack, useRouter, useSegments } from 'expo-router';
+import { SplashScreen, Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
 
-SplashScreen.preventAutoHideAsync();
-
 export default function RootLayout() {
   const colorScheme = useColorScheme();
   const router = useRouter();
-  const segments = useSegments();
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
-  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    // Verificar si debemos ir a setup o a monitoring
-    const checkInitialRoute = async () => {
-      try {
-        // Comprobar si ya hay una configuración guardada
-        const savedConfig = await AsyncStorage.getItem('incubationConfig');
+    if (loaded) {
+      // Verificar si hay configuración guardada
+      const checkConfig = async () => {
+        try {
+          const savedConfig = await AsyncStorage.getItem('incubationConfig');
 
-        // Si estamos en una ruta diferente de setup o (tabs), redirigir
-        if (segments[0] !== 'setup' && segments[0] !== '(tabs)') {
-          // Si ya hay configuración, ir a la tab de monitoring, si no, ir a setup
+          // Redirigir basado en la configuración
           if (savedConfig) {
             router.replace('/(tabs)/monitoring');
           } else {
             router.replace('/setup');
           }
+
+          // Ocultar la pantalla de splash después de decidir la ruta
+          SplashScreen.hideAsync();
+        } catch (error) {
+          console.error('Error al verificar configuración:', error);
+          router.replace('/setup');
+          SplashScreen.hideAsync();
         }
+      };
 
-        // Marcar que ya estamos listos para mostrar la UI
-        setIsReady(true);
-      } catch (error) {
-        console.error('Error al verificar la ruta inicial:', error);
-        // En caso de error, mostrar setup
-        router.replace('/setup');
-        setIsReady(true);
-      }
-    };
-
-    checkInitialRoute();
-  }, [router, segments]);
-
-  useEffect(() => {
-    // Ocultar la pantalla de splash cuando estemos listos
-    if (isReady) {
-      SplashScreen.hideAsync();
+      checkConfig();
     }
-  }, [isReady]);
+  }, [loaded, router]);
 
-  // Mientras se decide a dónde ir, mostrar una vista vacía
-  if (!isReady || !loaded) {
+  // Mostrar una vista vacía mientras se cargan los recursos
+  if (!loaded) {
     return <View />;
   }
 
